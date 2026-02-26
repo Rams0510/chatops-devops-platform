@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ChatOps — Deployment Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600;700&family=Syne:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #080b12;
+    --surface: #0d1117;
+    --surface2: #161b22;
+    --border: #21262d;
+    --accent: #00d4aa;
+    --accent2: #7c3aed;
+    --danger: #f85149;
+    --warning: #e3b341;
+    --text: #e6edf3;
+    --text2: #8b949e;
+    --text3: #484f58;
+    --success-glow: 0 0 20px rgba(0,212,170,0.3);
+    --danger-glow: 0 0 20px rgba(248,81,73,0.3);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'JetBrains Mono', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Animated grid background */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(0,212,170,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(0,212,170,0.03) 1px, transparent 1px);
+    background-size: 40px 40px;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 24px;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* Header */
+  header {
+    padding: 32px 0 24px;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 40px;
+  }
+
+  .header-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 16px;
+  }
+
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .logo-icon {
+    width: 40px;
+    height: 40px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border-radius: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+  }
+
+  .logo-text {
+    font-family: 'Syne', sans-serif;
+    font-size: 22px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+  }
+
+  .logo-text span {
+    color: var(--accent);
+  }
+
+  .live-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text2);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    padding: 6px 12px;
+    border-radius: 20px;
+  }
+
+  .live-dot {
+    width: 6px;
+    height: 6px;
+    background: var(--accent);
+    border-radius: 50%;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.5; transform: scale(0.8); }
+  }
+
+  /* Stats row */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 40px;
+  }
+
+  .stat-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 24px;
+    position: relative;
+    overflow: hidden;
+    animation: fadeUp 0.5s ease forwards;
+    opacity: 0;
+    transform: translateY(20px);
+  }
+
+  .stat-card:nth-child(1) { animation-delay: 0.1s; }
+  .stat-card:nth-child(2) { animation-delay: 0.2s; }
+  .stat-card:nth-child(3) { animation-delay: 0.3s; }
+  .stat-card:nth-child(4) { animation-delay: 0.4s; }
+
+  @keyframes fadeUp {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+
+  .stat-card:hover::before { opacity: 1; }
+
+  .stat-label {
+    font-size: 11px;
+    color: var(--text2);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+
+  .stat-value {
+    font-family: 'Syne', sans-serif;
+    font-size: 36px;
+    font-weight: 800;
+    line-height: 1;
+    margin-bottom: 4px;
+  }
+
+  .stat-value.green { color: var(--accent); }
+  .stat-value.red { color: var(--danger); }
+  .stat-value.yellow { color: var(--warning); }
+  .stat-value.purple { color: #a78bfa; }
+
+  .stat-sub {
+    font-size: 11px;
+    color: var(--text3);
+  }
+
+  /* Section header */
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 20px;
+  }
+
+  .section-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 16px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .section-title::before {
+    content: '';
+    width: 3px;
+    height: 16px;
+    background: var(--accent);
+    border-radius: 2px;
+  }
+
+  .refresh-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text2);
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .refresh-btn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* Deployment table */
+  .deployments-table {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    margin-bottom: 40px;
+  }
+
+  .table-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr 1fr 1fr;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    align-items: center;
+    transition: background 0.2s;
+    animation: fadeIn 0.4s ease forwards;
+    opacity: 0;
+  }
+
+  @keyframes fadeIn {
+    to { opacity: 1; }
+  }
+
+  .table-row:last-child { border-bottom: none; }
+
+  .table-row.header {
+    background: var(--surface2);
+    opacity: 1;
+    animation: none;
+  }
+
+  .table-row:not(.header):hover {
+    background: var(--surface2);
+  }
+
+  .table-row.header .col {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: var(--text3);
+    font-weight: 600;
+  }
+
+  .col { font-size: 13px; }
+
+  .repo-name {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .repo-icon {
+    width: 28px;
+    height: 28px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    flex-shrink: 0;
+  }
+
+  .repo-info { overflow: hidden; }
+
+  .repo-title {
+    color: var(--text);
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .repo-url {
+    font-size: 11px;
+    color: var(--text3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* Status badge */
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .status-badge.success {
+    background: rgba(0,212,170,0.1);
+    color: var(--accent);
+    border: 1px solid rgba(0,212,170,0.3);
+  }
+
+  .status-badge.failed {
+    background: rgba(248,81,73,0.1);
+    color: var(--danger);
+    border: 1px solid rgba(248,81,73,0.3);
+  }
+
+  .status-badge.deploying {
+    background: rgba(227,179,65,0.1);
+    color: var(--warning);
+    border: 1px solid rgba(227,179,65,0.3);
+  }
+
+  .status-badge.trigger_failed {
+    background: rgba(124,58,237,0.1);
+    color: #a78bfa;
+    border: 1px solid rgba(124,58,237,0.3);
+  }
+
+  .status-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  .status-badge.deploying .status-dot {
+    animation: pulse 1.5s infinite;
+  }
+
+  /* Environment tag */
+  .env-tag {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .env-tag.dev { background: rgba(124,58,237,0.2); color: #a78bfa; }
+  .env-tag.staging { background: rgba(227,179,65,0.2); color: var(--warning); }
+  .env-tag.prod { background: rgba(248,81,73,0.2); color: var(--danger); }
+
+  /* User avatar */
+  .user-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .avatar {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  .run-link {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: opacity 0.2s;
+  }
+
+  .run-link:hover { opacity: 0.7; }
+
+  /* Empty state */
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text3);
+  }
+
+  .empty-icon {
+    font-size: 40px;
+    margin-bottom: 12px;
+    opacity: 0.5;
+  }
+
+  .empty-text {
+    font-size: 14px;
+    margin-bottom: 6px;
+    color: var(--text2);
+  }
+
+  .empty-sub {
+    font-size: 12px;
+  }
+
+  /* Loading */
+  .loading {
+    text-align: center;
+    padding: 40px;
+    color: var(--text3);
+    font-size: 13px;
+  }
+
+  .loading-bar {
+    height: 2px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-bottom: 16px;
+  }
+
+  .loading-bar-inner {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    animation: loading 1.5s infinite;
+    width: 40%;
+  }
+
+  @keyframes loading {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+  }
+
+  /* Footer */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 24px 0;
+    text-align: center;
+    color: var(--text3);
+    font-size: 11px;
+  }
+
+  footer span { color: var(--accent); }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    .table-row {
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .col:nth-child(3),
+    .col:nth-child(5) { display: none; }
+    .table-row.header .col:nth-child(3),
+    .table-row.header .col:nth-child(5) { display: none; }
+    .stats-grid { grid-template-columns: 1fr 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <div class="header-inner">
+      <div class="logo">
+        <div class="logo-icon">🚀</div>
+        <div>
+          <div class="logo-text">Chat<span>Ops</span></div>
+          <div style="font-size:11px;color:var(--text3);margin-top:2px;">Deployment Dashboard</div>
+        </div>
+      </div>
+      <div class="live-indicator">
+        <div class="live-dot"></div>
+        LIVE
+      </div>
+    </div>
+  </header>
+
+  <!-- Stats -->
+  <div class="stats-grid" id="statsGrid">
+    <div class="stat-card">
+      <div class="stat-label">Total Deployments</div>
+      <div class="stat-value purple" id="statTotal">—</div>
+      <div class="stat-sub">all time</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Successful</div>
+      <div class="stat-value green" id="statSuccess">—</div>
+      <div class="stat-sub">completed</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Failed</div>
+      <div class="stat-value red" id="statFailed">—</div>
+      <div class="stat-sub">need attention</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">In Progress</div>
+      <div class="stat-value yellow" id="statDeploying">—</div>
+      <div class="stat-sub">running now</div>
+    </div>
+  </div>
+
+  <!-- Deployments -->
+  <div class="section-header">
+    <div class="section-title">Recent Deployments</div>
+    <button class="refresh-btn" onclick="loadDeployments()">
+      ↻ Refresh
+    </button>
+  </div>
+
+  <div class="deployments-table">
+    <div class="table-row header">
+      <div class="col">Repository</div>
+      <div class="col">Status</div>
+      <div class="col">Environment</div>
+      <div class="col">Triggered By</div>
+      <div class="col">Actions</div>
+    </div>
+    <div id="deploymentsBody">
+      <div class="loading">
+        <div class="loading-bar"><div class="loading-bar-inner"></div></div>
+        Loading deployments...
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    Built with ❤️ — <span>ChatOps Deployment Platform</span> — Auto-refreshes every 30s
+  </footer>
+</div>
+
+<script>
+  const API_BASE = window.location.origin;
+
+  function getStatusBadge(status) {
+    const map = {
+      'SUCCESS':       ['success',        '✓ Success'],
+      'FAILED':        ['failed',         '✗ Failed'],
+      'DEPLOYING':     ['deploying',      '⟳ Deploying'],
+      'TRIGGER_FAILED':['trigger_failed', '⚠ Trigger Failed']
+    };
+    const [cls, label] = map[status] || ['deploying', status];
+    return `<span class="status-badge ${cls}"><span class="status-dot"></span>${label}</span>`;
+  }
+
+  function getEnvTag(env) {
+    const e = (env || 'dev').toLowerCase();
+    return `<span class="env-tag ${e}">${e}</span>`;
+  }
+
+  function getInitials(name) {
+    return (name || '?').slice(0, 2).toUpperCase();
+  }
+
+  function formatTime(timestamp) {
+    if (!timestamp) return '—';
+    const d = new Date(timestamp);
+    return d.toLocaleString('en-IN', {
+      month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    });
+  }
+
+  function getRepoName(url) {
+    if (!url) return 'Unknown';
+    const parts = url.replace(/\/$/, '').split('/');
+    return parts[parts.length - 1];
+  }
+
+  async function loadDeployments() {
+    const body = document.getElementById('deploymentsBody');
+    body.innerHTML = `
+      <div class="loading">
+        <div class="loading-bar"><div class="loading-bar-inner"></div></div>
+        Loading deployments...
+      </div>`;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/deployments`);
+      const data = await res.json();
+      const deployments = data.deployments || [];
+
+      // Update stats
+      document.getElementById('statTotal').textContent = deployments.length;
+      document.getElementById('statSuccess').textContent =
+        deployments.filter(d => d.status === 'SUCCESS').length;
+      document.getElementById('statFailed').textContent =
+        deployments.filter(d => d.status === 'FAILED').length;
+      document.getElementById('statDeploying').textContent =
+        deployments.filter(d => d.status === 'DEPLOYING').length;
+
+      if (deployments.length === 0) {
+        body.innerHTML = `
+          <div class="empty-state">
+            <div class="empty-icon">🚀</div>
+            <div class="empty-text">No deployments yet</div>
+            <div class="empty-sub">Run /deploy in Slack to get started</div>
+          </div>`;
+        return;
+      }
+
+      body.innerHTML = deployments.map((d, i) => `
+        <div class="table-row" style="animation-delay:${i * 0.05}s">
+          <div class="col">
+            <div class="repo-name">
+              <div class="repo-icon">⬡</div>
+              <div class="repo-info">
+                <div class="repo-title">${getRepoName(d.repo_url)}</div>
+                <div class="repo-url">${d.repo_url || ''}</div>
+              </div>
+            </div>
+          </div>
+          <div class="col">${getStatusBadge(d.status)}</div>
+          <div class="col">${getEnvTag(d.environment)}</div>
+          <div class="col">
+            <div class="user-cell">
+              <div class="avatar">${getInitials(d.user_name)}</div>
+              @${d.user_name || 'unknown'}
+            </div>
+          </div>
+          <div class="col">
+            ${d.run_url
+              ? `<a class="run-link" href="${d.run_url}" target="_blank">↗ View Run</a>`
+              : `<span style="color:var(--text3);font-size:11px;">${formatTime(d.timestamp)}</span>`
+            }
+          </div>
+        </div>`).join('');
+
+    } catch (err) {
+      body.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">⚠️</div>
+          <div class="empty-text">Could not load deployments</div>
+          <div class="empty-sub">${err.message}</div>
+        </div>`;
+    }
+  }
+
+  // Load on start
+  loadDeployments();
+
+  // Auto refresh every 30 seconds
+  setInterval(loadDeployments, 30000);
+</script>
+</body>
+</html>

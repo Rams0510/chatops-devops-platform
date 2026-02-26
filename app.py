@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from database import Base, engine
 from slack_routes import slack_bp
 from models import Deployment
@@ -26,6 +26,40 @@ def index():
 def health():
     return jsonify({"status": "running"})
 
+# ── Dashboard ─────────────────────────────────────────────────
+@app.route("/dashboard")
+def dashboard():
+    return render_template("dashboard.html")
+
+# ── API — All Deployments for Dashboard ──────────────────────
+@app.route("/api/deployments")
+def api_deployments():
+    db = SessionLocal()
+    try:
+        deployments = db.query(Deployment)\
+            .order_by(Deployment.id.desc())\
+            .limit(50)\
+            .all()
+        return jsonify({
+            "deployments": [d.to_dict() for d in deployments]
+        })
+    finally:
+        db.close()
+
+# ── API — Single Deployment Status ───────────────────────────
+@app.route("/api/deployments/<int:deployment_id>")
+def api_deployment_status(deployment_id):
+    db = SessionLocal()
+    try:
+        deployment = db.query(Deployment).filter(
+            Deployment.id == deployment_id
+        ).first()
+        if not deployment:
+            return jsonify({"error": "Deployment not found"}), 404
+        return jsonify(deployment.to_dict())
+    finally:
+        db.close()
+
 # ── GitHub Webhook Receiver ───────────────────────────────────
 @app.route("/webhook/github", methods=["POST"])
 def github_webhook():
@@ -39,16 +73,20 @@ def github_webhook():
     run_url       = data.get("run_url", "")
 
     db = SessionLocal()
-    deployment = db.query(Deployment).get(deployment_id)
+    try:
+        deployment = db.query(Deployment).filter(
+            Deployment.id == deployment_id
+        ).first()
 
-    if deployment:
-        deployment.status  = status
-        deployment.run_url = run_url
-        db.commit()
-        db.refresh(deployment)
-        notify_slack(deployment, status, environment, run_url)
+        if deployment:
+            deployment.status  = status
+            deployment.run_url = run_url
+            db.commit()
+            db.refresh(deployment)
+            notify_slack(deployment, status, environment, run_url)
+    finally:
+        db.close()
 
-    db.close()
     return jsonify({"ok": True})
 
 
