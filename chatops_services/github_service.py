@@ -1,7 +1,6 @@
 import requests
 import os
 import base64
-import json
 
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 
@@ -11,7 +10,11 @@ HEADERS = {
     "X-GitHub-Api-Version": "2022-11-28"
 }
 
-WORKFLOW_CONTENT = '''name: ChatOps Deployment
+WEBHOOK_URL    = os.environ.get("CHATOPS_WEBHOOK_URL", "")
+WEBHOOK_SECRET = os.environ.get("CHATOPS_WEBHOOK_SECRET", "")
+
+def get_workflow_content():
+    return f"""name: ChatOps Deployment
 
 on:
   repository_dispatch:
@@ -26,133 +29,78 @@ jobs:
 
       - name: Show Deployment Info
         run: |
-          echo "Deploying to ${{ github.event.client_payload.environment }}"
-          echo "Deployment ID: ${{ github.event.client_payload.deployment_id }}"
+          echo "Deploying to ${{{{ github.event.client_payload.environment }}}}"
+          echo "Deployment ID: ${{{{ github.event.client_payload.deployment_id }}}}"
+          echo "Deploy successful!"
 
       - name: Notify Backend - SUCCESS
         if: success()
         run: |
-          curl -X POST ${{ secrets.CHATOPS_WEBHOOK_URL }}/webhook/github \\
+          curl -X POST {WEBHOOK_URL}/webhook/github \\
             -H "Content-Type: application/json" \\
-            -H "X-Webhook-Secret: ${{ secrets.CHATOPS_WEBHOOK_SECRET }}" \\
-            -d "{\\"deployment_id\\": \\"${{ github.event.client_payload.deployment_id }}\\", \\"status\\": \\"SUCCESS\\", \\"environment\\": \\"${{ github.event.client_payload.environment }}\\", \\"run_url\\": \\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\\"}"
+            -H "X-Webhook-Secret: {WEBHOOK_SECRET}" \\
+            -d "{{\\\"deployment_id\\\": \\\"${{{{ github.event.client_payload.deployment_id }}}}\\\", \\\"status\\\": \\\"SUCCESS\\\", \\\"environment\\\": \\\"${{{{ github.event.client_payload.environment }}}}\\\", \\\"run_url\\\": \\\"https://github.com/${{{{ github.repository }}}}/actions/runs/${{{{ github.run_id }}}}\\\"}}"
 
       - name: Notify Backend - FAILED
         if: failure()
         run: |
-          curl -X POST ${{ secrets.CHATOPS_WEBHOOK_URL }}/webhook/github \\
+          curl -X POST {WEBHOOK_URL}/webhook/github \\
             -H "Content-Type: application/json" \\
-            -H "X-Webhook-Secret: ${{ secrets.CHATOPS_WEBHOOK_SECRET }}" \\
-            -d "{\\"deployment_id\\": \\"${{ github.event.client_payload.deployment_id }}\\", \\"status\\": \\"FAILED\\", \\"environment\\": \\"${{ github.event.client_payload.environment }}\\", \\"run_url\\": \\"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\\"}"
-'''
+            -H "X-Webhook-Secret: {WEBHOOK_SECRET}" \\
+            -d "{{\\\"deployment_id\\\": \\\"${{{{ github.event.client_payload.deployment_id }}}}\\\", \\\"status\\\": \\\"FAILED\\\", \\\"environment\\\": \\\"${{{{ github.event.client_payload.environment }}}}\\\", \\\"run_url\\\": \\\"https://github.com/${{{{ github.repository }}}}/actions/runs/${{{{ github.run_id }}}}\\\"}}"
+"""
+
+
+def parse_repo(repo_url: str):
+    """Parse owner and repo name from GitHub URL."""
+    parts = repo_url.rstrip("/").split("/")
+    return parts[-2], parts[-1]
+
 
 def ensure_workflow_exists(owner: str, repo: str):
     """
-    Checks if workflow file exists in repo.
+    Checks if workflow exists in target repo.
     If not, creates it automatically.
     """
     file_path = ".github/workflows/chatops-deploy.yml"
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
 
-    # Check if file already exists
-    response = requests.get(url, headers=HEADERS)
+    # Check if workflow already exists
+    check = requests.get(url, headers=HEADERS)
 
-    if response.status_code == 200:
-        print("Workflow already exists")
+    if check.status_code == 200:
+        print(f"Workflow already exists in {owner}/{repo}")
         return {"success": True, "created": False}
 
-    # File doesn't exist - create it
+    # Workflow missing - create it automatically
+    print(f"Creating workflow in {owner}/{repo}...")
     content_encoded = base64.b64encode(
-        WORKFLOW_CONTENT.encode()
+        get_workflow_content().encode()
     ).decode()
 
-    create_response = requests.put(
+    create = requests.put(
         url,
         headers=HEADERS,
         json={
-            "message": "chore: add ChatOps deployment workflow",
+            "message": "chore: add ChatOps deployment workflow [auto-created]",
             "content": content_encoded
         }
     )
 
-    if create_response.status_code == 201:
+    if create.status_code == 201:
+        print(f"Workflow created successfully in {owner}/{repo}")
         return {"success": True, "created": True}
     else:
-        return {"success": False, "error": create_response.text}
+        print(f"Failed to create workflow: {create.text}")
+        return {"success": False, "error": create.text}
 
 
-def add_repo_secrets(owner: str, repo: str):
-    """
-    Adds CHATOPS_WEBHOOK_URL and CHATOPS_WEBHOOK_SECRET
-    to the target repo automatically.
-    Note: Requires getting repo public key first for encryption.
-    """
-    from nacl import encoding, public  # pip install PyNaCl
+def trigger_dispatch(owner: str, repo: str, environment: str, deployment_id: int):
+    """Triggers the GitHub Actions workflow."""
+    url = f"https://api.github.com/repos/{owner}/{repo}/dispatches"
 
-    webhook_url    = os.environ.get("RENDER_URL", "")
-    webhook_secret = os.environ.get("CHATOPS_WEBHOOK_SECRET", "")
-
-    # Get repo public key (needed to encrypt secrets)
-    key_url = f"https://api.github.com/repos/{owner}/{repo}/actions/secrets/public-key"
-    key_response = requests.get(key_url, headers=HEADERS)
-    key_data = key_response.json()
-
-    public_key = public.PublicKey(
-        key_data["key"].encode("utf-8"),
-        encoding.Base64Encoder()
-    )
-    sealed_box = public.SealedBox(public_key)
-
-    def encrypt_secret(value: str) -> str:
-        encrypted = sealed_box.encrypt(value.encode("utf-8"))
-        return base64.b64encode(encrypted).decode("utf-8")
-
-    secrets_to_add = {
-        "CHATOPS_WEBHOOK_URL":    webhook_url,
-        "CHATOPS_WEBHOOK_SECRET": webhook_secret
-    }
-
-    for secret_name, secret_value in secrets_to_add.items():
-        requests.put(
-            f"https://api.github.com/repos/{owner}/{repo}/actions/secrets/{secret_name}",
-            headers=HEADERS,
-            json={
-                "encrypted_value": encrypt_secret(secret_value),
-                "key_id": key_data["key_id"]
-            }
-        )
-
-    return {"success": True}
-
-
-def trigger_github_deployment(repo_url: str, environment: str, deployment_id: int):
-    """
-    Full automatic flow:
-    1. Parse owner/repo from URL
-    2. Create workflow if missing
-    3. Add secrets if missing
-    4. Trigger deployment
-    """
-    parts = repo_url.rstrip("/").split("/")
-    owner = parts[-2]
-    repo  = parts[-1]
-
-    # Step 1: Ensure workflow exists
-    workflow_result = ensure_workflow_exists(owner, repo)
-    if not workflow_result["success"]:
-        return {"success": False, "error": f"Could not create workflow: {workflow_result['error']}"}
-
-    # Step 2: Add secrets automatically
-    try:
-        add_repo_secrets(owner, repo)
-    except Exception as e:
-        print(f"Could not add secrets: {e}")
-        # Continue anyway - secrets might already exist
-
-    # Step 3: Trigger the workflow
-    dispatch_url = f"https://api.github.com/repos/{owner}/{repo}/dispatches"
     response = requests.post(
-        dispatch_url,
+        url,
         headers=HEADERS,
         json={
             "event_type": "chatops-deploy",
@@ -168,3 +116,40 @@ def trigger_github_deployment(repo_url: str, environment: str, deployment_id: in
         return {"success": True}
     else:
         return {"success": False, "error": response.text}
+
+
+def trigger_github_deployment(repo_url: str, environment: str, deployment_id: int):
+    """
+    FULL AUTOMATIC FLOW:
+    1. Parse owner/repo from URL
+    2. Create workflow if missing
+    3. Trigger deployment
+    
+    User just types /deploy <any-github-repo> <env>
+    Everything else is automatic!
+    """
+    try:
+        # Step 1 - Parse repo URL
+        owner, repo = parse_repo(repo_url)
+        print(f"Processing deployment for {owner}/{repo}")
+
+        # Step 2 - Auto create workflow if missing
+        workflow_result = ensure_workflow_exists(owner, repo)
+        if not workflow_result["success"]:
+            return {
+                "success": False,
+                "error": f"Could not setup workflow: {workflow_result['error']}"
+            }
+
+        # Step 3 - Wait briefly if workflow was just created
+        if workflow_result.get("created"):
+            import time
+            print("Workflow just created, waiting 3 seconds...")
+            time.sleep(3)
+
+        # Step 4 - Trigger the deployment
+        result = trigger_dispatch(owner, repo, environment, deployment_id)
+        return result
+
+    except Exception as e:
+        return {"success": False, "error": str(e)}
