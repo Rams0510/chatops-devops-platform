@@ -1,0 +1,17 @@
+# Environment variables - NEVER commit this
+.env
+
+# Virtual environment
+chatops/
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Database
+*.db
+
+# VS Code
+.vscode/
