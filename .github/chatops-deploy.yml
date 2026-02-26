@@ -1,0 +1,64 @@
+name: ChatOps Deployment
+
+on:
+  repository_dispatch:
+    types: [chatops-deploy]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Simulate Deployment
+        run: |
+          echo "Deploying to ${{ github.event.client_payload.environment }}"
+          echo "Deployment ID: ${{ github.event.client_payload.deployment_id }}"
+          echo "Deploy successful!"
+
+      - name: Notify Backend - SUCCESS
+        if: success()
+        run: |
+          curl -X POST ${{ secrets.CHATOPS_WEBHOOK_URL }}/webhook/github \
+            -H "Content-Type: application/json" \
+            -H "X-Webhook-Secret: ${{ secrets.CHATOPS_WEBHOOK_SECRET }}" \
+            -d "{
+              \"deployment_id\": \"${{ github.event.client_payload.deployment_id }}\",
+              \"status\": \"SUCCESS\",
+              \"environment\": \"${{ github.event.client_payload.environment }}\",
+              \"run_url\": \"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+            }"
+
+      - name: Notify Backend - FAILED
+        if: failure()
+        run: |
+          curl -X POST ${{ secrets.CHATOPS_WEBHOOK_URL }}/webhook/github \
+            -H "Content-Type: application/json" \
+            -H "X-Webhook-Secret: ${{ secrets.CHATOPS_WEBHOOK_SECRET }}" \
+            -d "{
+              \"deployment_id\": \"${{ github.event.client_payload.deployment_id }}\",
+              \"status\": \"FAILED\",
+              \"environment\": \"${{ github.event.client_payload.environment }}\",
+              \"run_url\": \"https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+            }"
+```
+
+### Step 3 — Add GitHub Repo Secrets
+
+Go to **github.com/Rams0510/chatops-devops-platform** → Settings → Secrets and Variables → Actions → New repository secret:
+```
+Name:  CHATOPS_WEBHOOK_URL
+Value: https://chatops-devops-platform.onrender.com
+
+Name:  CHATOPS_WEBHOOK_SECRET
+Value: (same value you put in Render environment variables)
