@@ -1,22 +1,19 @@
 import requests
 import os
 import base64
-import time
 
+GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN")
 
-def get_headers():
-    """Get headers fresh every time — reads env vars at call time."""
-    token = os.environ.get("GITHUB_TOKEN")
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28"
-    }
+HEADERS = {
+    "Authorization": f"Bearer {GITHUB_TOKEN}",
+    "Accept": "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28"
+}
+
+WEBHOOK_URL    = os.environ.get("CHATOPS_WEBHOOK_URL", "")
+WEBHOOK_SECRET = os.environ.get("CHATOPS_WEBHOOK_SECRET", "")
+
 def get_workflow_content():
-    """Generate workflow content with current env var values."""
-    webhook_url    = os.environ.get("CHATOPS_WEBHOOK_URL", "")
-    webhook_secret = os.environ.get("CHATOPS_WEBHOOK_SECRET", "")
-
     return f"""name: ChatOps Deployment
 
 on:
@@ -39,17 +36,17 @@ jobs:
       - name: Notify Backend - SUCCESS
         if: success()
         run: |
-          curl -X POST {webhook_url}/webhook/github \\
+          curl -X POST {WEBHOOK_URL}/webhook/github \\
             -H "Content-Type: application/json" \\
-            -H "X-Webhook-Secret: {webhook_secret}" \\
+            -H "X-Webhook-Secret: {WEBHOOK_SECRET}" \\
             -d "{{\\\"deployment_id\\\": \\\"${{{{ github.event.client_payload.deployment_id }}}}\\\", \\\"status\\\": \\\"SUCCESS\\\", \\\"environment\\\": \\\"${{{{ github.event.client_payload.environment }}}}\\\", \\\"run_url\\\": \\\"https://github.com/${{{{ github.repository }}}}/actions/runs/${{{{ github.run_id }}}}\\\"}}"
 
       - name: Notify Backend - FAILED
         if: failure()
         run: |
-          curl -X POST {webhook_url}/webhook/github \\
+          curl -X POST {WEBHOOK_URL}/webhook/github \\
             -H "Content-Type: application/json" \\
-            -H "X-Webhook-Secret: {webhook_secret}" \\
+            -H "X-Webhook-Secret: {WEBHOOK_SECRET}" \\
             -d "{{\\\"deployment_id\\\": \\\"${{{{ github.event.client_payload.deployment_id }}}}\\\", \\\"status\\\": \\\"FAILED\\\", \\\"environment\\\": \\\"${{{{ github.event.client_payload.environment }}}}\\\", \\\"run_url\\\": \\\"https://github.com/${{{{ github.repository }}}}/actions/runs/${{{{ github.run_id }}}}\\\"}}"
 """
 
@@ -65,12 +62,11 @@ def ensure_workflow_exists(owner: str, repo: str):
     Checks if workflow exists in target repo.
     If not, creates it automatically.
     """
-    headers   = get_headers()
     file_path = ".github/workflows/chatops-deploy.yml"
-    url       = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
+    url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
 
     # Check if workflow already exists
-    check = requests.get(url, headers=headers)
+    check = requests.get(url, headers=HEADERS)
 
     if check.status_code == 200:
         print(f"Workflow already exists in {owner}/{repo}")
@@ -84,7 +80,7 @@ def ensure_workflow_exists(owner: str, repo: str):
 
     create = requests.put(
         url,
-        headers=headers,
+        headers=HEADERS,
         json={
             "message": "chore: add ChatOps deployment workflow [auto-created]",
             "content": content_encoded
@@ -101,18 +97,17 @@ def ensure_workflow_exists(owner: str, repo: str):
 
 def trigger_dispatch(owner: str, repo: str, environment: str, deployment_id: int):
     """Triggers the GitHub Actions workflow."""
-    headers  = get_headers()
-    url      = f"https://api.github.com/repos/{owner}/{repo}/dispatches"
+    url = f"https://api.github.com/repos/{owner}/{repo}/dispatches"
 
     response = requests.post(
         url,
-        headers=headers,
+        headers=HEADERS,
         json={
             "event_type": "chatops-deploy",
             "client_payload": {
-                "environment":   environment,
+                "environment": environment,
                 "deployment_id": str(deployment_id),
-                "triggered_by":  "chatops"
+                "triggered_by": "chatops"
             }
         }
     )
@@ -129,7 +124,7 @@ def trigger_github_deployment(repo_url: str, environment: str, deployment_id: in
     1. Parse owner/repo from URL
     2. Create workflow if missing
     3. Trigger deployment
-
+    
     User just types /deploy <any-github-repo> <env>
     Everything else is automatic!
     """
@@ -148,12 +143,13 @@ def trigger_github_deployment(repo_url: str, environment: str, deployment_id: in
 
         # Step 3 - Wait briefly if workflow was just created
         if workflow_result.get("created"):
-            print("Workflow just created, waiting 5 seconds...")
-            time.sleep(5)
+            import time
+            print("Workflow just created, waiting 3 seconds...")
+            time.sleep(3)
 
         # Step 4 - Trigger the deployment
         result = trigger_dispatch(owner, repo, environment, deployment_id)
         return result
-    
+
     except Exception as e:
         return {"success": False, "error": str(e)}
