@@ -99,6 +99,14 @@ def github_webhook():
         db.close()
 
     return jsonify({"ok": True})
+@app.route("/debug/token")
+def debug_token():
+    token = os.environ.get("GITHUB_TOKEN", "NOT SET")
+    return jsonify({
+        "token_length": len(token),
+        "token_start": token[:10] if token else "EMPTY",
+        "token_set": bool(token)
+    })
 
 if __name__ == "__main__":
     app.run(debug=True)
