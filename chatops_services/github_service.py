@@ -32,13 +32,10 @@ jobs:
 
       - name: Deploy to Railway
         id: deploy
-        env:
-          RAILWAY_TOKEN: ${{{{ secrets.RAILWAY_TOKEN }}}}
         run: |
           echo "Deploying to Railway..."
-          railway up --detach
-          
-          DEPLOY_URL=$(railway domain 2>/dev/null || echo "https://railway.app")
+          railway up --detach --token {os.environ.get('RAILWAY_TOKEN', '')}
+          DEPLOY_URL=$(railway domain --token {os.environ.get('RAILWAY_TOKEN', '')} 2>/dev/null || echo "https://railway.app")
           echo "url=$DEPLOY_URL" >> $GITHUB_OUTPUT
           echo "Deployed to: $DEPLOY_URL"
 
@@ -58,7 +55,6 @@ jobs:
             -H "X-Webhook-Secret: {WEBHOOK_SECRET}" \\
             -d "{{\\\"deployment_id\\\": \\\"${{{{ github.event.client_payload.deployment_id }}}}\\\", \\\"status\\\": \\\"FAILED\\\", \\\"environment\\\": \\\"${{{{ github.event.client_payload.environment }}}}\\\", \\\"run_url\\\": \\\"https://github.com/${{{{ github.repository }}}}/actions/runs/${{{{ github.run_id }}}}\\\"}}"
 """
-
 
 def parse_repo(repo_url: str):
     """Parse owner and repo name from GitHub URL."""
