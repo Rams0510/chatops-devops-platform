@@ -3,10 +3,25 @@ from database import SessionLocal
 from models import Deployment
 from chatops_services.github_service import trigger_github_deployment
 from datetime import datetime
+import threading
 
 slack_bp = Blueprint("slack", __name__)
 
 VALID_ENVIRONMENTS = ["dev", "staging", "prod"]
+
+def process_deployment(repo_url, environment, user_name, deployment_id):
+    """Runs in background thread so Slack gets instant response"""
+    result = trigger_github_deployment(repo_url, environment, deployment_id)
+    
+    if not result["success"]:
+        db = SessionLocal()
+        try:
+            dep = db.query(Deployment).filter(Deployment.id == deployment_id).first()
+            if dep:
+                dep.status = "TRIGGER_FAILED"
+                db.commit()
+        finally:
+            db.close()
 
 @slack_bp.route("/slack", methods=["POST"])
 def slack_commands():
@@ -14,7 +29,6 @@ def slack_commands():
     text      = request.form.get("text", "").strip()
     user_name = request.form.get("user_name", "unknown")
 
-    # ── /deploy ──────────────────────────────────────────────
     if command == "/deploy":
         parts = text.split()
 
@@ -50,29 +64,21 @@ def slack_commands():
         finally:
             db.close()
 
-        # Trigger GitHub Actions
-        result = trigger_github_deployment(repo_url, environment, deployment_id)
+        # ← Run GitHub trigger in background thread
+        thread = threading.Thread(
+            target=process_deployment,
+            args=(repo_url, environment, user_name, deployment_id)
+        )
+        thread.daemon = True
+        thread.start()
 
-        if not result["success"]:
-            db = SessionLocal()
-            try:
-                dep = db.query(Deployment).filter(Deployment.id == deployment_id).first()
-                if dep:
-                    dep.status = "TRIGGER_FAILED"
-                    db.commit()
-            finally:
-                db.close()
-            return jsonify({
-                "response_type": "ephemeral",
-                "text": f"GitHub trigger failed: {result['error']}"
-            })
-
+        # ← Respond to Slack IMMEDIATELY (within 3 seconds)
         return jsonify({
             "response_type": "in_channel",
             "blocks": [
                 {
                     "type": "header",
-                    "text": {"type": "plain_text", "text": "Deployment Triggered!"}
+                    "text": {"type": "plain_text", "text": "🚀 Deployment Triggered!"}
                 },
                 {
                     "type": "section",
@@ -87,13 +93,12 @@ def slack_commands():
                     "type": "section",
                     "text": {
                         "type": "mrkdwn",
-                        "text": "Status: `DEPLOYING` - I'll post here when it finishes."
+                        "text": "⏳ Status: `DEPLOYING` - I'll post here when it finishes."
                     }
                 }
             ]
         })
 
-    # ── /deploy-status ────────────────────────────────────────
     elif command == "/deploy-status":
         db = SessionLocal()
         try:
@@ -115,21 +120,13 @@ def slack_commands():
                 }
             ]
 
-            status_icons = {
-                "SUCCESS":        "SUCCESS",
-                "FAILED":         "FAILED",
-                "DEPLOYING":      "DEPLOYING",
-                "TRIGGER_FAILED": "TRIGGER_FAILED"
-            }
-
             for dep in deployments:
-                status_label = status_icons.get(dep.status, dep.status)
                 blocks.append({
                     "type": "section",
                     "fields": [
                         {"type": "mrkdwn", "text": f"*Repo:*\n{dep.repo_url}"},
                         {"type": "mrkdwn", "text": f"*Env:*\n`{dep.environment}`"},
-                        {"type": "mrkdwn", "text": f"*Status:*\n`{status_label}`"},
+                        {"type": "mrkdwn", "text": f"*Status:*\n`{dep.status}`"},
                         {"type": "mrkdwn", "text": f"*By:*\n@{dep.user_name}"}
                     ]
                 })
@@ -143,7 +140,7 @@ def slack_commands():
         except Exception as e:
             return jsonify({
                 "response_type": "ephemeral",
-                "text": f"Error fetching status: {str(e)}"
+                "text": f"Error: {str(e)}"
             })
         finally:
             db.close()
