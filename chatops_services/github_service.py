@@ -68,41 +68,54 @@ def parse_repo(repo_url: str):
 
 def ensure_workflow_exists(owner: str, repo: str):
     """
-    Checks if workflow exists in target repo.
-    If not, creates it automatically.
+    Always updates the workflow in target repo with latest version.
     """
     file_path = ".github/workflows/chatops-deploy.yml"
     url = f"https://api.github.com/repos/{owner}/{repo}/contents/{file_path}"
 
-    # Check if workflow already exists
-    check = requests.get(url, headers=HEADERS)
-
-    if check.status_code == 200:
-        print(f"Workflow already exists in {owner}/{repo}")
-        return {"success": True, "created": False}
-
-    # Workflow missing - create it automatically
-    print(f"Creating workflow in {owner}/{repo}...")
     content_encoded = base64.b64encode(
         get_workflow_content().encode()
     ).decode()
 
-    create = requests.put(
-        url,
-        headers=HEADERS,
-        json={
-            "message": "chore: add ChatOps deployment workflow [auto-created]",
-            "content": content_encoded
-        }
-    )
+    # Check if workflow already exists (need SHA to update)
+    check = requests.get(url, headers=HEADERS)
 
-    if create.status_code == 201:
-        print(f"Workflow created successfully in {owner}/{repo}")
-        return {"success": True, "created": True}
+    if check.status_code == 200:
+        # File exists — update it with new content
+        sha = check.json()["sha"]
+        print(f"Updating existing workflow in {owner}/{repo}...")
+        response = requests.put(
+            url,
+            headers=HEADERS,
+            json={
+                "message": "chore: update ChatOps deployment workflow",
+                "content": content_encoded,
+                "sha": sha  # required for updates
+            }
+        )
+        if response.status_code == 200:
+            print(f"Workflow updated successfully in {owner}/{repo}")
+            return {"success": True, "created": False, "updated": True}
+        else:
+            print(f"Failed to update workflow: {response.text}")
+            return {"success": False, "error": response.text}
     else:
-        print(f"Failed to create workflow: {create.text}")
-        return {"success": False, "error": create.text}
-
+        # File doesn't exist — create it
+        print(f"Creating workflow in {owner}/{repo}...")
+        response = requests.put(
+            url,
+            headers=HEADERS,
+            json={
+                "message": "chore: add ChatOps deployment workflow [auto-created]",
+                "content": content_encoded
+            }
+        )
+        if response.status_code == 201:
+            print(f"Workflow created in {owner}/{repo}")
+            return {"success": True, "created": True}
+        else:
+            print(f"Failed to create workflow: {response.text}")
+            return {"success": False, "error": response.text}
 
 def trigger_dispatch(owner: str, repo: str, environment: str, deployment_id: int):
     """Triggers the GitHub Actions workflow."""
