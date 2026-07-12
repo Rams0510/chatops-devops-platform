@@ -14,6 +14,7 @@ WEBHOOK_URL    = os.environ.get("CHATOPS_WEBHOOK_URL", "")
 WEBHOOK_SECRET = os.environ.get("CHATOPS_WEBHOOK_SECRET", "")
 
 def get_workflow_content():
+    railway_token = os.environ.get('RAILWAY_TOKEN', '')
     return f"""name: ChatOps Deployment
 
 on:
@@ -27,15 +28,57 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Deploy to Railway
+      - name: Deploy to Railway via API
         id: deploy
         run: |
-          echo "Deploying to Railway..."
-          railway up --detach --token {os.environ.get('RAILWAY_TOKEN', '')}
-          DEPLOY_URL=$(railway domain --token {os.environ.get('RAILWAY_TOKEN', '')} 2>/dev/null || echo "https://railway.app")
+          echo "Creating Railway project and deploying..."
+          
+          REPO_NAME=$(echo "${{{{ github.repository }}}}" | cut -d'/' -f2)
+          
+          # Create project via Railway GraphQL API
+          RESPONSE=$(curl -s -X POST https://backboard.railway.app/graphql/v2 \\
+            -H "Authorization: Bearer {railway_token}" \\
+            -H "Content-Type: application/json" \\
+            -d "{{
+              \\"query\\": \\"mutation {{ projectCreate(input: {{ name: \\\\\\"$REPO_NAME-${{{{ github.event.client_payload.environment }}}}\\\\\\", defaultEnvironmentName: \\\\\\"${{{{ github.event.client_payload.environment }}}}\\\\\\" }}) {{ id environments {{ edges {{ node {{ id name }} }} }} }} }}\\"
+            }}")
+          
+          echo "Railway response: $RESPONSE"
+          PROJECT_ID=$(echo $RESPONSE | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['projectCreate']['id'])" 2>/dev/null || echo "")
+          ENV_ID=$(echo $RESPONSE | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['projectCreate']['environments']['edges'][0]['node']['id'])" 2>/dev/null || echo "")
+          
+          if [ -z "$PROJECT_ID" ]; then
+            echo "Failed to create Railway project"
+            exit 1
+          fi
+          
+          echo "Project ID: $PROJECT_ID"
+          echo "Environment ID: $ENV_ID"
+          
+          # Create service from GitHub repo
+          SERVICE_RESPONSE=$(curl -s -X POST https://backboard.railway.app/graphql/v2 \\
+            -H "Authorization: Bearer {railway_token}" \\
+            -H "Content-Type: application/json" \\
+            -d "{{
+              \\"query\\": \\"mutation {{ serviceCreate(input: {{ projectId: \\\\\\"$PROJECT_ID\\\\\\", source: {{ repo: \\\\\\"${{{{ github.repository }}}}\\\\\\" }} }}) {{ id }} }}\\"
+            }}")
+          
+          echo "Service response: $SERVICE_RESPONSE"
+          SERVICE_ID=$(echo $SERVICE_RESPONSE | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['data']['serviceCreate']['id'])" 2>/dev/null || echo "")
+          
+          # Wait for deployment
+          sleep 30
+          
+          # Get deployment URL
+          DOMAIN_RESPONSE=$(curl -s -X POST https://backboard.railway.app/graphql/v2 \\
+            -H "Authorization: Bearer {railway_token}" \\
+            -H "Content-Type: application/json" \\
+            -d "{{
+              \\"query\\": \\"mutation {{ serviceDomainCreate(input: {{ serviceId: \\\\\\"$SERVICE_ID\\\\\\", environmentId: \\\\\\"$ENV_ID\\\\\\" }}) {{ domain }} }}\\"
+            }}")
+          
+          DEPLOY_URL=$(echo $DOMAIN_RESPONSE | python3 -c "import sys,json; d=json.load(sys.stdin); print('https://' + d['data']['serviceDomainCreate']['domain'])" 2>/dev/null || echo "https://railway.app/project/$PROJECT_ID")
+          
           echo "url=$DEPLOY_URL" >> $GITHUB_OUTPUT
           echo "Deployed to: $DEPLOY_URL"
 
