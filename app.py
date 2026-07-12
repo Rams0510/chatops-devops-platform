@@ -88,9 +88,10 @@ def github_webhook():
         if deployment:
             deployment.status  = status
             deployment.run_url = run_url
+            deployment.url     = data.get("url", "")  # ← save live URL
             db.commit()
             db.refresh(deployment)
-            print(f"Updated to {status}")
+            print(f"Updated to {status}, URL: {deployment.url}")
             notify_slack(deployment, status, environment, run_url)
     except Exception as e:
         print(f"Webhook error: {e}")

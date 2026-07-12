@@ -27,11 +27,20 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Show Deployment Info
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy to Railway
+        id: deploy
+        env:
+          RAILWAY_TOKEN: ${{{{ secrets.RAILWAY_TOKEN }}}}
         run: |
-          echo "Deploying to ${{{{ github.event.client_payload.environment }}}}"
-          echo "Deployment ID: ${{{{ github.event.client_payload.deployment_id }}}}"
-          echo "Deploy successful!"
+          echo "Deploying to Railway..."
+          railway up --detach
+          
+          DEPLOY_URL=$(railway domain 2>/dev/null || echo "https://railway.app")
+          echo "url=$DEPLOY_URL" >> $GITHUB_OUTPUT
+          echo "Deployed to: $DEPLOY_URL"
 
       - name: Notify Backend - SUCCESS
         if: success()
@@ -39,7 +48,7 @@ jobs:
           curl -X POST {WEBHOOK_URL}/webhook/github \\
             -H "Content-Type: application/json" \\
             -H "X-Webhook-Secret: {WEBHOOK_SECRET}" \\
-            -d "{{\\\"deployment_id\\\": \\\"${{{{ github.event.client_payload.deployment_id }}}}\\\", \\\"status\\\": \\\"SUCCESS\\\", \\\"environment\\\": \\\"${{{{ github.event.client_payload.environment }}}}\\\", \\\"run_url\\\": \\\"https://github.com/${{{{ github.repository }}}}/actions/runs/${{{{ github.run_id }}}}\\\"}}"
+            -d "{{\\\"deployment_id\\\": \\\"${{{{ github.event.client_payload.deployment_id }}}}\\\", \\\"status\\\": \\\"SUCCESS\\\", \\\"environment\\\": \\\"${{{{ github.event.client_payload.environment }}}}\\\", \\\"url\\\": \\\"${{{{ steps.deploy.outputs.url }}}}\\\", \\\"run_url\\\": \\\"https://github.com/${{{{ github.repository }}}}/actions/runs/${{{{ github.run_id }}}}\\\"}}"
 
       - name: Notify Backend - FAILED
         if: failure()
