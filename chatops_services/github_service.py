@@ -178,37 +178,137 @@ def trigger_dispatch(owner: str, repo: str, environment: str, deployment_id: int
     else:
         return {"success": False, "error": response.text}
 
+def detect_project_type(owner: str, repo: str) -> str:
+    """Detects project type by checking files in the repo"""
+    checks = {
+        "python": ["requirements.txt", "app.py", "main.py", "setup.py"],
+        "node":   ["package.json", "index.js", "server.js"],
+        "static": ["index.html"]
+    }
+    
+    for lang, files in checks.items():
+        for f in files:
+            url = f"https://api.github.com/repos/{owner}/{repo}/contents/{f}"
+            resp = requests.get(url, headers=HEADERS)
+            if resp.status_code == 200:
+                print(f"Detected {lang} project (found {f})")
+                return lang
+    
+    return "unknown"
+
+
+def get_dockerfile(project_type: str) -> str:
+    """Returns appropriate Dockerfile based on project type"""
+    if project_type == "python":
+        return """FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8080
+CMD ["python", "app.py"]
+"""
+    elif project_type == "node":
+        return """FROM node:18-slim
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+EXPOSE 8080
+CMD ["node", "index.js"]
+"""
+    else:
+        return """FROM nginx:alpine
+COPY . /usr/share/nginx/html
+EXPOSE 80
+"""
+
+
+def get_railway_config(project_type: str) -> str:
+    """Returns railway.toml based on project type"""
+    if project_type == "python":
+        return """[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "python app.py"
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+"""
+    elif project_type == "node":
+        return """[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "node index.js"
+healthcheckPath = "/"
+healthcheckTimeout = 30
+restartPolicyType = "on_failure"
+"""
+    else:
+        return """[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "nginx -g 'daemon off;'"
+"""
+
+
+def inject_deployment_files(owner: str, repo: str, project_type: str):
+    """Auto-injects Dockerfile and railway.toml into target repo"""
+    
+    files_to_inject = {
+        "Dockerfile": get_dockerfile(project_type),
+        "railway.toml": get_railway_config(project_type)
+    }
+    
+    for filename, content in files_to_inject.items():
+        url = f"https://api.github.com/repos/{owner}/{repo}/contents/{filename}"
+        content_encoded = base64.b64encode(content.encode()).decode()
+        
+        # Check if file exists
+        check = requests.get(url, headers=HEADERS)
+        
+        if check.status_code == 200:
+            # Update existing file
+            sha = check.json()["sha"]
+            requests.put(url, headers=HEADERS, json={
+                "message": f"chore: update {filename} [chatops-auto]",
+                "content": content_encoded,
+                "sha": sha
+            })
+        else:
+            # Create new file
+            requests.put(url, headers=HEADERS, json={
+                "message": f"chore: add {filename} [chatops-auto]",
+                "content": content_encoded
+            })
+        
+        print(f"Injected {filename} into {owner}/{repo}")
 
 def trigger_github_deployment(repo_url: str, environment: str, deployment_id: int):
-    """
-    FULL AUTOMATIC FLOW:
-    1. Parse owner/repo from URL
-    2. Create workflow if missing
-    3. Trigger deployment
-    
-    User just types /deploy <any-github-repo> <env>
-    Everything else is automatic!
-    """
     try:
-        # Step 1 - Parse repo URL
         owner, repo = parse_repo(repo_url)
         print(f"Processing deployment for {owner}/{repo}")
 
-        # Step 2 - Auto create workflow if missing
+        # Step 1 - Detect project type
+        project_type = detect_project_type(owner, repo)
+        print(f"Project type: {project_type}")
+
+        # Step 2 - Auto inject Dockerfile + railway.toml
+        inject_deployment_files(owner, repo, project_type)
+
+        # Step 3 - Create/update workflow
         workflow_result = ensure_workflow_exists(owner, repo)
         if not workflow_result["success"]:
-            return {
-                "success": False,
-                "error": f"Could not setup workflow: {workflow_result['error']}"
-            }
+            return {"success": False, "error": f"Could not setup workflow: {workflow_result['error']}"}
 
-        # Step 3 - Wait briefly if workflow was just created
-        if workflow_result.get("created"):
-            import time
-            print("Workflow just created, waiting 3 seconds...")
-            time.sleep(3)
+        # Step 4 - Wait if files were just created
+        import time
+        time.sleep(3)
 
-        # Step 4 - Trigger the deployment
+        # Step 5 - Trigger deployment
         result = trigger_dispatch(owner, repo, environment, deployment_id)
         return result
 
